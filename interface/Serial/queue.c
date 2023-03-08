@@ -61,22 +61,24 @@ int remote_dequeue(QUEUE *q, unsigned char *buf)
 
 int cbus_enqueue(QUEUE *q, unsigned char *buf) //数据写入缓冲区
 {
+	
+	
     pthread_mutex_lock(&q->queue_mutex);
-
     if (!is_queue_full(q)) { //读指针和写指针必须相等，保证先写再读
         pthread_mutex_unlock(&q->queue_mutex);
         return -1;
     }
-
     int len = buf[5];
     memcpy(q->data[q->w_pointer], buf, len);
 
     q->w_pointer = (q->w_pointer + 1) % QUEUE_MAX; //当写指针为299时，下一个又是0
-    pthread_mutex_unlock(&q->queue_mutex);
+	
+
+	pthread_mutex_unlock(&q->queue_mutex);
     return 0;
 }
 
-int qy_enqueue(QUEUE *q, unsigned char buf[][QY_DATA_LEN], int line_num) //数据写入启源串口的缓冲区
+int qy_enqueue(QUEUE *q, unsigned char buf[][BUF_MAX], int line_num) //数据写入启源串口的缓冲区
 {
     pthread_mutex_lock(&q->queue_mutex);
 
@@ -97,28 +99,23 @@ int qy_enqueue(QUEUE *q, unsigned char buf[][QY_DATA_LEN], int line_num) //数�
     return 0;
 }
 
-int qy_dequeue(QUEUE *q, unsigned char buf[][QY_DATA_LEN]){
+int qy_dequeue(QUEUE *q, unsigned char *buf) //将缓冲区的数据提取出来
+{
     pthread_mutex_lock(&q->queue_mutex);
 
-    if (!is_queue_empty(q)) { 
+    if (!is_queue_empty(q)) { //读缓冲区数据时写指针一定大于读指针
         pthread_mutex_unlock(&q->queue_mutex);
         return -1;
     }
-	int i;
-	int line_num = 0;
-	
 
-	line_num = q->w_pointer-q->r_pointer;
-	line_num = line_num > 0 ?line_num:QUEUE_MAX-abs(line_num);
+    int len = q->data[q->r_pointer][4] + 5;
+    memcpy(buf, q->data[q->r_pointer], len);
 
-	for(i = 0; i < line_num; i++){
-		memcpy(buf[i], q->data[q->r_pointer], QY_DATA_LEN);
-		q->r_pointer = (q->r_pointer + 1) % QUEUE_MAX;
-	}
-	
+    q->r_pointer = (q->r_pointer + 1) % QUEUE_MAX;
     pthread_mutex_unlock(&q->queue_mutex);
     return 0;
 }
+
 
 int cbus_dequeue(QUEUE *q, unsigned char *buf) //将缓冲区的数据提取出来
 {

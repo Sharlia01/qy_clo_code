@@ -6,6 +6,7 @@
 #include <sys/file.h>
 #include <sys/time.h>
 #include <pthread.h>
+#include <fcntl.h>
 
 
 #include "addr_req.h"
@@ -41,14 +42,14 @@ void parse_addr_file(unsigned char *addr)
 	fclose(fp);
 }
 
-void parse_pir_addr(unsigned char *addr, unsigned char *dimmer_num){
+void parse_pir_addr(unsigned char *addr){
 	FILE *fp = fopen(ADDR_PATH, "r");
 	unsigned char str[30] = {0};
 	unsigned char data[30] = {0};
 	int bytes_num_tmp = 0;
 	int bytes_num = 0;
 
-	*dimmer_num = 0;
+	
 	sprintf(str, "pir_addr");
 
 	while (fgets(data, sizeof(data), fp)){
@@ -57,7 +58,7 @@ void parse_pir_addr(unsigned char *addr, unsigned char *dimmer_num){
 			bytes_num = bytes_num_tmp;
 			break;
 		}
-		*dimmer_num +=1;
+		
 		bytes_num_tmp +=strlen(data);
 		memset(data, 0, sizeof(data));
 	}
@@ -148,7 +149,8 @@ void save_dimmer_value(unsigned char dimmer_value, unsigned char dev_addr, unsig
 
 
 //读取photometric.txt文件，获取其中的调光值
-void parse_dimmer_file(unsigned char *dimmer_value, unsigned char dev_addr, unsigned char sub_addr){
+void parse_dimmer_file(unsigned char *dimmer_value, unsigned char dev_addr, unsigned char sub_addr)
+{
 	FILE *fp = fopen(DIMMING_PATH, "a+");
 	char data[40] = {0};
 	char str[40] = {0};
@@ -171,12 +173,13 @@ void parse_dimmer_file(unsigned char *dimmer_value, unsigned char dev_addr, unsi
 	if (!dimmer_exist_flag){//没有保存调光值
 		*dimmer_value = 0x64;
 	}
-	else {
+	else { //文件中保存了调光值
 		fclose(fp);
 		fopen(DIMMING_PATH, "r");
 		fseek(fp,bytes_num, SEEK_SET);
 		fscanf(fp, "%*s %s", dimmer_value);//取出文件中保存的调光值
 		*dimmer_value = atoi(dimmer_value);
+
 	}
 		
 	fclose(fp);
@@ -185,26 +188,44 @@ void parse_dimmer_file(unsigned char *dimmer_value, unsigned char dev_addr, unsi
 void bin_to_dec(char *val, unsigned char *data){
 	int i = 0;
 	*data = 0x00;
-
+	
 	for (i = 0; i < DIAL_NUM; i++){
-		*data = (*data)*2 + (val[i] - '0');
+		*data = (*data)*2 + val[i];
 	}
 	
 }
 
 void read_dev_num(int *dimmer_cnt, int *pir_num){
-	FILE *fp = fopen(DEV_NUM, "r+");
-	char data[30];
+	FILE *fp = fopen(DEV_NUM, "r");
+	char data[50];
 	int i = 0;
-	char str[2][30];
+	char str[2][50] = {0};
 	while (fgets(data, sizeof(data), fp)){
 		
 		sscanf(data, "%*s %s", str[i]);
 		i++;
 	}
-	
 	*dimmer_cnt = atoi(str[0]);
 	*pir_num = atoi(str[1]);
+	fclose(fp);
+}
+
+int match_addr_flag(UCHAR data){
+	UCHAR str[50] = {0};
+	UCHAR contents[50] = {0};
+	FILE *fp = fopen(ADDR_PATH, "r");
+
+	sprintf(str, "dimmer_addr %d", data);
+
+	while (fgets(contents,sizeof(contents), fp)){
+		if (strstr(contents, str) != NULL) {
+			fclose(fp);
+			return 1;
+		}
+	}
+
+	return 0;
+
 }
 
 void save_to_addr(unsigned char data){
@@ -214,6 +235,7 @@ void save_to_addr(unsigned char data){
 	int PIR_NUM = 0;
 	int DIMMER_CNT = 0;
 	int ret;
+	UCHAR str[50] = {0};
 
 	read_dev_num(&DIMMER_CNT, &PIR_NUM);
 	
@@ -241,51 +263,81 @@ void save_to_addr(unsigned char data){
 
 }
 
+void remove_all_files(void)
+{
+	if((access(DIMMING_PATH,F_OK))!=-1)//文件存在
+		remove(DIMMING_PATH); //删除调光值文件
+
+	
+	if((access(DIMMER_SCENE,F_OK))!=-1)//文件存在
+		remove(DIMMER_SCENE); //删除场景文件
+}
+
 //读取拨码盘数据并存入addr.txt
 void *read_addr(void *args){
 	char dial[DIAL_NUM][BUF_MAX] = {0};
 	int i;
 	int fd[DIAL_NUM];
 	char val[DIAL_NUM] = {0};
-	unsigned char data;
+	unsigned char data = 0x00;
+	UCHAR data_tmp;
 	char val_tmp;
+	int flag = 2;
 
 	for (i = 0; i < DIAL_NUM; i++){
+		//拨码盘引脚dial0-dial7
 		sprintf(dial[i], "/dev/dial%d", i);
 		
 		/*打开文件*/
 		fd[i] = open(dial[i], O_RDWR);
-
 		if (fd[i] == -1){
-			printf("can not open file %s \n", dial[i]);
+			printf("can not open file \n");
 		}
-		
 	}
 
 
 	/* 读拨码数据 */
-	while(1){
+	while(1){ //一直在监听拨码盘
+
+		data_tmp = data;
 		
 		for (i = 0; i < DIAL_NUM; i++){
+						
 			read(fd[i], &val_tmp, 1);
 			val[i] = val_tmp;
+			val_tmp = 0;
+			
 		}
-
+		
 		bin_to_dec(val, &data); //将二进制的val转换成十进制
 
-		if (data == 0x00)
-			printf("拨码不正确，请重新拨码\n");
-		else
-			break;
+		if (data_tmp == data)
+			continue;
 
+		sleep(1);
+		
+		if (data > 0xf0)
+		{
+			printf("\n (* n *)>>>--------------拨码过大 : %02x，请重新拨码--------------\n",data);
+			sleep(2);
+			continue;
+		}
+		else{
+			printf("\n (* n *)>>>--------------拨码 : %02x，请按键入网--------------\n",data);
+		}
+
+		if (access(ADDR_PATH,F_OK) != -1) //如果该文件存在
+			flag = match_addr_flag(data);
+
+		save_to_addr(data); //将数据存入addr.txt
+
+		if (flag == 0)
+		{
+			printf("delete all config files");
+			remove_all_files();
+		}
 	}
 
-	for (i = 0; i< DIAL_NUM; i++){
-		close(fd[i]); 
-	}
-
-	/* 将数据存入addr.txt */
-	save_to_addr(data);
 	
 }
 
@@ -295,41 +347,24 @@ void request_address(void)
 	//创建线程读取拨码盘数据并保存至addr.txt
 	
     pthread_t tid_read;
+
+
     pthread_create(&tid_read, NULL, read_addr, NULL); 
     pthread_detach(tid_read);
 
 }
 
 
-
 //匹配addr.txt中存储的调光灯设备地址
-int match_dimmer_addr(unsigned char dev_addr){
+int match_addr(unsigned char dev_addr, char addr_name[30]){
 	unsigned char str[30] = {0};
 	unsigned char data[30] = {0};
 	FILE *fp = fopen(ADDR_PATH, "r");
 	
-	sprintf(str, "dimmer_addr %d",dev_addr);
+	sprintf(str, "%s %d", addr_name,dev_addr);
 
 	while (fgets(data,sizeof(data), fp)){
 		if (strstr(data, str) != NULL) {
-			fclose(fp);
-			return 1;
-		}
-		memset(data, 0, sizeof(data));
-	}
-	fclose(fp);
-	return 0;
-}
-
-int match_pir_addr(unsigned char dev_addr){//匹配红外传感器地址（8路继电器）
-	unsigned char str[30] = {0};
-	unsigned char data[30] = {0};
-	FILE *fp = fopen(ADDR_PATH, "r");
-
-	sprintf(str, "pir_addr %d", dev_addr);
-
-	while (fgets(data, sizeof(data), fp)){
-		if (strstr(data, str)!=NULL){
 			fclose(fp);
 			return 1;
 		}
@@ -369,9 +404,10 @@ void match_dimmer_scene(SCENE_P *para){
 		}
 		else if (strstr(data, str_pir)!=NULL){
 			scene_match_flag = 1;
-			sscanf(data, "%*s %s %s %*s %*s %*s %s", \
+			sscanf(data, "%*s %s %s %*s %*s %*s %s %*s %s", \
 				dev_addr[para->scene_num], sub_addr[para->scene_num], \
-				pir_state[para->scene_num]);
+				pir_state[para->scene_num],time_delay[para->scene_num]);
+		
 			para->scene_num++;
 		}
 		memset(data, 0, sizeof(data));
@@ -397,7 +433,7 @@ void save_scene_para(SCENE_P *scene_para){
 	FILE *fp = fopen(DIMMER_SCENE,"a+");
 	int ret;
 
-	if (match_dimmer_addr(scene_para->dev_addr[0]) == 1){ //若是调光设备
+	if (match_addr(scene_para->dev_addr[0],"dimmer_addr") == 1){ //若是调光设备
 		ret = fprintf(fp, "dimmer %d %d #scene_id %d #value %d #delay %d\n",scene_para->dev_addr[0], \
 			scene_para->sub_addr[0], scene_para->scene_id, scene_para->dimmer_value[0], scene_para->time_delay[0]);
 		
@@ -407,9 +443,10 @@ void save_scene_para(SCENE_P *scene_para){
 		}
 		
 	}
-	else if (match_pir_addr(scene_para->dev_addr[0]) == 1){ //若是红外传感器设备
-		ret = fprintf(fp, "pir %d %d #scene_id %d #state %d", scene_para->dev_addr[0], \
-			scene_para->sub_addr[0], scene_para->scene_id, scene_para->pir_state[0]);
+	else if (match_addr(scene_para->dev_addr[0], "pir_addr") == 1){ //若是红外传感器设备
+		ret = fprintf(fp, "pir %d %d #scene_id %d #state %d #delay %d\n", scene_para->dev_addr[0], \
+			scene_para->sub_addr[0], scene_para->scene_id, scene_para->pir_state[0], \
+			scene_para->time_delay[0]);
 
 		if (ret < 0)
 		{
@@ -418,12 +455,11 @@ void save_scene_para(SCENE_P *scene_para){
 	}
 		
 	fclose(fp);
-
 }
 
 void delete_scene_para(SCENE_P *para){
 	int ret;
-	FILE *fp = fopen(DIMMER_SCENE, "r+");
+	FILE *fp = fopen(DIMMER_SCENE, "a+");
 	FILE *fp_tmp = fopen(DIMMER_SCENE_TMP, "a+");
 	char str[50] = {0};
 	char data[50] = {0};
@@ -469,26 +505,35 @@ void delete_scene_para(SCENE_P *para){
 	
 }
 
-
+//将启源回路地址转换为clowire设备地址
 void addr_trans_qy(unsigned char *dev_addr, unsigned char *sub_addr, unsigned char circuit_num){
 	FILE *fp = fopen(ADDR_PATH, "r");
 	int module_num = 0;
 
 	parse_addr_file(dev_addr);
 
-	module_num = circuit_num/CIRCUIT_MAX;
+	module_num = (circuit_num-0x01)/DIMMER;
 
 	*dev_addr = module_num + *dev_addr;
-	*sub_addr = circuit_num - module_num*CIRCUIT_MAX + SUB_ADDR_MIN - 0x01;
+	//回路地址02代表0x33
+	*sub_addr = (circuit_num - module_num*DIMMER- 0x01)*2+ SUB_ADDR_MIN;
 
 }
 
 void read_addr_file(DEV_QY *qy_device){
-	FILE *fp = fopen(ADDR_PATH, "r");
 	char str[30] = {0};
 	char type[30] = {0};
 	int i;
 	int ret;
+	FILE *fp = NULL;
+
+	while(1){
+		fp = fopen(ADDR_PATH,"r");
+		if (!fp)
+			ret = -1;
+		else
+			break;
+	}
 	
 	for (i = 0; i < qy_device->dev_seq; i++){
 		memset(str, 0, sizeof(str));

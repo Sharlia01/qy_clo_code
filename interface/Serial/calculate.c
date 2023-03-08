@@ -6,6 +6,7 @@
 #include <sys/time.h>
 
 #include "interface_manage.h"
+#include "protocol.h"
 //异或校验
 unsigned char XOR_check(unsigned char *data, unsigned char lenth)
 {
@@ -138,13 +139,16 @@ void get_valid_cbus_data(READ_PARM_GROUP *grp)
             count = 0;
             package_size = buf_tmp[i + 5]; //读取包长度
             if ((buf_tmp[i + (package_size - 1)] == XOR_check(buf_tmp + i, (package_size - 1))) \
-                    && ((package_size > 0) && (package_size < DATA_MAX))) {  //校验成功并且数据长度小于30
+                    && ((package_size > 0) && (package_size < DATA_MAX)) && grp->len >= package_size) {  //校验成功并且数据长度小于30
                 while (*grp->p_flag);
 
                 memcpy(grp->buf_final, &buf_tmp[i], package_size); //得到一包有效数据
 
                 //创建线程将有效数据放入该串口的读缓冲区和其他串口的写缓冲区
                 *grp->p_flag = 1;
+
+				grp->len -= package_size;
+				
                 ret = pthread_create(&tid, NULL, data_to_other_thread, grp);
                 if (ret != 0)
                     printf("uart send other thread create failed.\n");
@@ -177,6 +181,7 @@ void get_valid_cbus_data(READ_PARM_GROUP *grp)
     }
  }
 
+
 //qy串口发过来的数据
  void get_valid_trans_data(READ_PARM_GROUP *grp) 
 {
@@ -187,15 +192,15 @@ void get_valid_cbus_data(READ_PARM_GROUP *grp)
 	unsigned char buf_tmp_tmp[BUF_MAX] = {0};
 	pthread_t tid;
 
-	/*每次遍历整个数组，发现3A之后截取一包数据*/
+	/*每次遍历整个数组，发现00 04之后截取一包数据*/
 	for (i =0; i < BUF_MAX; i++) 
 	{
-		if (buf_tmp[i] == 0x3A)//启源数据的帧头
+		if (buf_tmp[i+2] == 0x0B && buf_tmp[i+2] == 0x5B)//启源数据的帧头
 		{
 			count = 0;
-			package_size = buf_tmp[i+2] + 6;
-			//进行校验位检测
-			if((buf_tmp[i+(package_size-2)] == 0xAA)&&(buf_tmp[i+(package_size-1)] == 0xBB))
+			package_size = buf_tmp[i+4]+5;
+			//不进行校验位检测
+			if(buf_tmp[i+6]!=0)
 			{
 				while(*grp->p_flag);
 
@@ -224,9 +229,7 @@ void get_valid_cbus_data(READ_PARM_GROUP *grp)
 				
 			}
 
-
-
-		}else if (buf_tmp[i] == 0x00) {
+		}else if (buf_tmp[i+2] == 0x00) {
             count++;
             if (count >= 20) {
                 count = 0;
@@ -239,8 +242,5 @@ void get_valid_cbus_data(READ_PARM_GROUP *grp)
 	}
 
 }
-
-
-
 
 

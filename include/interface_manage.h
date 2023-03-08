@@ -5,11 +5,14 @@
 #include "queue.h"
 
 #define WATCHDOG   1
+#define SERIAL_485 2
+#define SERIAL_TTL 3
 #define BUF_MAX    512
 #define DIMMER_NUM 200
 
 #define CLOWIRE_PORT "/dev/ttyS1"
 #define SERIAL_CNT 2
+typedef unsigned char UCHAR;
 
 struct hardware;
 
@@ -22,6 +25,7 @@ typedef struct read_parameter_group {
 	unsigned char *buf_tmp;
     unsigned char *buf_final;
     fd_set  *p_readfd;
+	int len;
     struct timeval *p_timeout;
 }READ_PARM_GROUP, P_READ_PARM_GROUP;
 

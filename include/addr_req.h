@@ -18,7 +18,10 @@
 
 
 
-int match_dimmer_addr(unsigned char);
-int match_pir_addr(unsigned char);
+int match_addr(unsigned char, char[]);
+void read_dev_num(int *dimmer_cnt, int *pir_num);
+void parse_dimmer_file(unsigned char *dimmer_value, unsigned char dev_addr, unsigned char sub_addr);
+
+
 
 #endif

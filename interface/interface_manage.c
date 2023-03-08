@@ -47,5 +47,6 @@ void register_interface(void)
 {
     register_watchdog();
     register_serial();
+	
 }
 

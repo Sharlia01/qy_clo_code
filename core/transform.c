@@ -21,51 +21,63 @@ void clowire_to_qiyuan(unsigned char *complite_data, unsigned char qy_data[][BUF
     unsigned char scene_id = 0;
 	int dimmer_addr_flag = 0;
 	int pir_addr_flag = 0;
+	int i,len;
 	
-	dimmer_addr_flag = match_dimmer_addr(dev_addr);
-	pir_addr_flag = match_pir_addr(dev_addr);
+	dimmer_addr_flag = match_addr(dev_addr,"dimmer_addr");
+	pir_addr_flag = match_addr(dev_addr,"pir_addr");
 	
 		switch(cmd) 
 		{
 			case SINGLE_CONTROL: //单独控制
 				printf("single dev control command from clowire\n");
-				if (dimmer_addr_flag)
+				if (dimmer_addr_flag) //调光灯的控制指令包括调光灯的色温
 					single_control_trans(complite_data);
-				else if (pir_addr_flag)
+				else if (pir_addr_flag) //红外传感器的控制指令
 					pir_control(complite_data);
-					
-				memcpy(qy_data[0], complite_data, strlen(complite_data));
+
+				//单独控制指令只有一条
+				len = complite_data[4] + 5;
+				memcpy(qy_data[0], complite_data, len);
 				
+				printf("\n-------(* 'ω')>︻╦╤─❇---- handle data ---------\n");						   
+				for (i = 0; i < len; i++)												 
+					printf("%02x ", complite_data[i]);													  
+				printf("\n------------------------------------------------------\n");
+				
+				break;
 				
 			case SCENE_CONFIG: //场景配置
 				printf("scene config command from clowire\n");
 				if (dimmer_addr_flag || pir_addr_flag)
 					scene_config_trans(complite_data);
-				
+				break;
 				//memcpy(qy_data[0], complite_data, strlen(complite_data));
 				
 			case SCENE_CONTROL: //场景控制
 				printf("scene control command from clowire\n");
 				scene_control_trans(complite_data, qy_data, para);
-			
+				break;
+				
 			case SCENE_CONFIG_DELETE://场景配置删除
 				printf("scene config delete command from clowire\n");
 				if (dimmer_addr_flag || pir_addr_flag)
 				scene_delete_trans(complite_data);
+				
 				//memcpy(qy_data[0], complite_data, strlen(complite_data));
+				break;
 				
 		}
+
+		
 	
 }
 
 void qiyuan_to_clowire(unsigned char *complite_data)
 {	
-	unsigned char circuit_num = complite_data[8];
-	unsigned char control_id = complite_data[7];
 
 	printf("dimmer feedback from qiyuan\n");
+	
 	dimmer_feedback(complite_data);
 
-	
 }
 

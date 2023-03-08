@@ -6,6 +6,7 @@
 
 
 #include <stdio.h>
+#include <unistd.h>
 #include "addr_req.h"
 #include "transform.h"
 #include "interface_manage.h"
@@ -17,8 +18,7 @@ int main(int argc, char **argv[])
 
 	/* 申请8路调光模块和8路继电器模块设备地址 */
 	request_address();
-
-
+	
 	/* 注册硬件(看门狗,485串口)加入到链表进行管理 */
 	register_interface();
 	
