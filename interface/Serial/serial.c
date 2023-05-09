@@ -241,26 +241,29 @@ void *data_to_clo_thread(void *grp_tmp)
 	int i, len; 
 	READ_PARM_GROUP *grp = (READ_PARM_GROUP *)grp_tmp;
 	unsigned char *data = grp->buf_final;
+	UCHAR data_send[BUF_MAX][BUF_MAX] = {0};
 
-	len = data[6]+5;
+	len = data[4]+5;
 	printf("\n-------(* 'ω')>︻╦╤─❇----%s recv data from qiyuan---------\n", grp->dev->name);                           
 	for (i = 0; i < len; i++)                                            
    		printf("%02x ", data[i]);                                                     
 	printf("\n------------------------------------------------------\n");
 
+	memcpy(data_send[0],data,len);
+
 	//将数据放入该串口的读缓冲区
-    cbus_enqueue(&grp->dev->queue_read, data);
+    qy_enqueue(&grp->dev->queue_read, data_send, 1);
 
 	//将启源控制指令转换成clowire指令(反馈指令)
-	qiyuan_to_clowire(data);
+	//qiyuan_to_clowire(data);
 	
 	//将数据放入其他串口的写缓冲区
-	char name[20] = {0};
+	/*char name[20] = {0};
 	INTERFACE *dev_other;
 	
 	sprintf(name, CLOWIRE_PORT);
 	dev_other = find_link_by_name(name);
-	cbus_enqueue(&dev_other->queue_write, data);
+	cbus_enqueue(&dev_other->queue_write, data);*/
 
     *grp->p_flag = 0;
 
@@ -311,7 +314,6 @@ void *monitor_button(void *qy_device){
 	char str_led[30] = {0};
 	char status = 0;
 	char val;
-	int i;
 	DEV_QY *qy_dev = (DEV_QY *)qy_device;
 	
 
@@ -346,6 +348,7 @@ void *monitor_button(void *qy_device){
 	}
 	
 	free(qy_dev);
+	qy_dev  = NULL;
 	close(fd[0]);
 	close(fd[1]);
 
@@ -510,7 +513,7 @@ void *wait_seconds(void *arg){
 	}
 	else if (qy_device->data[5] == 0x3A || qy_device->data[5] == 0x3B){ //调光模块设备(包括色温)
 		
-		parse_dimmer_file(&dim_value, dev_addr, sub_addr);
+		dim_value = parse_dimmer_file(dev_addr, sub_addr);
 	
 		if (qy_device->data[7] == 0x00)
 			qy_device->data[7] == dim_value;
@@ -524,10 +527,32 @@ void *wait_seconds(void *arg){
 	memcpy(data_send[0], qy_device->data, len);
 	
 	sleep(seconds);
-	qy_enqueue(&qy_device->dev->queue_write, data_send, 1);
+	qy_enqueue(&qy_device->dev->queue_write, data_send, 1); //给启源ttl的指令
+
+	//反馈一条到clowire uart port
+	feed_back(qy_device->data);
 
 	free(qy_device);
+	qy_device = NULL;
 
+}
+
+void *delay_sec(void *args){
+	DEV_QY *qy_dev = (DEV_QY *)args;
+	int secs,len;	
+	UCHAR data_send[BUF_MAX][BUF_MAX] = {0};
+	
+	secs = qy_dev->data[8];
+	len = qy_dev->data[4] + 5;
+	qy_dev->data[8] = 0x00;
+	
+	memcpy(data_send[0], qy_dev->data, len);
+	sleep(secs); //延时
+
+	qy_enqueue(&qy_dev->dev->queue_write, data_send, 1);
+
+	free(qy_dev);
+	qy_dev = NULL;
 }
 
 //将数据写进启源串口
@@ -535,25 +560,22 @@ void trans_serial_write(INTERFACE *dev)
 {
 	int i;
 	int len;
-	DEV_QY *qy_device = (DEV_QY *)malloc(sizeof(DEV_QY));
+	DEV_QY *qy_device =NULL;
 	UCHAR data[BUF_MAX] = {0};
 	int line_num;
 	int seconds;
 	pthread_t wait_sec;
 
-	memset(data, 0, BUF_MAX);
-
    
 	//将写缓冲区的数据提取到data中
 	if(!qy_dequeue(&dev->queue_write, data))
 		{
+			if(data[1] != 0x04)
+				return;
 
 			len = data[4] + 5;
-			seconds = data[8];
-			memcpy(qy_device->data, data, len);
-			qy_device->dev = dev;
+			seconds = data[8];	
 
-			
 			/*保证总线上一段时间内没有读取到数据才可以进行发送*/
 			while (1)
 			{
@@ -562,27 +584,38 @@ void trans_serial_write(INTERFACE *dev)
 				usleep(5);
 			}
 
-			printf("seconds:%d\n",seconds);
-
 			//延时效果
 			if (seconds > 0 && seconds <= 127){
-				sleep(seconds);
-				write(dev->fd, data, len);
+				pthread_t delay;
+				qy_device = (DEV_QY *)malloc(sizeof(DEV_QY));
+				memcpy(qy_device->data, data, len);
+				qy_device->dev = dev;
+			
+				pthread_create(&delay, NULL, delay_sec, qy_device);//开线程进行正延时
+				pthread_detach(delay);
+				
 			}
-			else if (seconds > 127 && seconds <= 255){
+			else if (seconds > 127 && seconds <= 255){ //反延时
+				qy_device = (DEV_QY *)malloc(sizeof(DEV_QY));
+				
+				memcpy(qy_device->data, data, len);
+				qy_device->dev = dev;
 				
 				data[8] = 0x00;
 				write(dev->fd, data, len);
 			
+				
 				pthread_create(&wait_sec, NULL, wait_seconds, qy_device); 
 				pthread_detach(wait_sec);
-
 			}
 			else if(seconds == 0){
+				usleep(20000);
 				write(dev->fd, data, len);
 			}
-			
+		
 	}
+
+	
 }
 
 //read data from qiyuan port
@@ -605,6 +638,9 @@ void trans_serial_read(READ_PARM_GROUP *grp)
 	}
 
 	len = read(grp->dev->fd, buf_read, BUF_MAX);
+	grp->len += len;
+
+	//printf("read len: %d",len);
     if (len <= 0) {
 		printf("read failed!\n");
         return;

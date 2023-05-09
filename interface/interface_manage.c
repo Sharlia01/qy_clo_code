@@ -32,6 +32,8 @@ void hardware_exit(void)
         p_tmp->exit(p_tmp->fd);
         p_tmp = p_tmp->next;
     }
+	dimmer_db_close();
+	remote_db_close();
 }
 
 

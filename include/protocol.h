@@ -7,6 +7,7 @@
 #define SCENE_CONTROL 0x0d
 #define SCENE_CONFIG_DELETE 0x0b
 #define IN_NET_CALLBACK 0x1A
+#define DELAY_CONFIG 0x11
 
 #define QY_DATA_LEN 9
 #define TRANS_PARA 2.55

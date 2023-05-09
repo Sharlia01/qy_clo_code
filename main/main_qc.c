@@ -15,12 +15,14 @@
 
 int main(int argc, char **argv[])
 {
-
 	/* 申请8路调光模块和8路继电器模块设备地址 */
 	request_address();
-	
+
+	/* 初始化数据库 */
+	remote_db_init();
+
 	/* 注册硬件(看门狗,485串口)加入到链表进行管理 */
-	register_interface();
+	register_interface();	
 	
     //初始化链表中的硬件
     hardware_init();

@@ -195,12 +195,13 @@ void get_valid_cbus_data(READ_PARM_GROUP *grp)
 	/*每次遍历整个数组，发现00 04之后截取一包数据*/
 	for (i =0; i < BUF_MAX; i++) 
 	{
-		if (buf_tmp[i+2] == 0x0B && buf_tmp[i+2] == 0x5B)//启源数据的帧头
+		if (buf_tmp[i] == 0x80 && buf_tmp[i+1] == 0xFF )//启源数据的帧头
 		{
 			count = 0;
 			package_size = buf_tmp[i+4]+5;
 			//不进行校验位检测
-			if(buf_tmp[i+6]!=0)
+			if(buf_tmp[i+6]!=0 &&((package_size > 0) && (package_size < DATA_MAX)) \
+				&& grp->len >= package_size)
 			{
 				while(*grp->p_flag);
 
@@ -217,6 +218,7 @@ void get_valid_cbus_data(READ_PARM_GROUP *grp)
 				
                 del_len = i + package_size;
                 *grp->p_index = *grp->p_index - del_len;
+				grp->len -=package_size;
 
                 //读到完整的一包后,把后面的数据放到buf_tmp的最前面
                 memset(buf_tmp_tmp, 0, BUF_MAX);
@@ -242,5 +244,7 @@ void get_valid_cbus_data(READ_PARM_GROUP *grp)
 	}
 
 }
+
+
 
 

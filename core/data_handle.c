@@ -95,6 +95,8 @@ void single_control_trans(unsigned char *data)
 		//保存调光值和设备地址到photometric.txt中
 		if (dimmer_value != 0x00)
 			save_dimmer_value(dimmer_value, dev_addr, sub_addr);
+
+		dimmer_db_update(dev_addr, sub_addr, dimmer_value);
 		
 		clo_qy_trans(&dimmer_value);//转换为启源协议中的调光值
 		data_send[7] = dimmer_value;
@@ -102,10 +104,13 @@ void single_control_trans(unsigned char *data)
 	}
 	else if(dimmer_value == 0x9A){ //关闭
 		data_send[7] = 0x00;
+		dimmer_db_update(dev_addr, sub_addr, 0x00);
 	}
 	else if(dimmer_value == 0x90){ //按照调光值打开调光灯
 		//读取photometric.txt文件，读取其中的调光值
-		parse_dimmer_file(&dimmer_value, dev_addr, sub_addr);
+		dimmer_value = parse_dimmer_file(dev_addr, sub_addr);
+		dimmer_db_update(dev_addr, sub_addr, dimmer_value);
+	
 		clo_qy_trans(&dimmer_value);
 	
 		data_send[7] = dimmer_value;
@@ -114,39 +119,25 @@ void single_control_trans(unsigned char *data)
 
 	memcpy(data, data_send, QY_DATA_LEN);
 
-
 }
 
-//配置发送给启源的数据
+//不需要发送给启源
 void pir_control(unsigned char *data){
-	unsigned char pir_state;
-	unsigned char dev_addr;
-	unsigned char sub_addr;
-	unsigned char data_send[QY_DATA_LEN] = {0};
+	UCHAR pir_state = data[7];
+	UCHAR dev_addr = data[1];
+	UCHAR sub_addr = data[2];
+	UCHAR cir_num;
 
-	pir_state = data[7];
-	dev_addr = data[1];
-	sub_addr = data[2];
-
-	data_send[0] = 0x00;
-	data_send[1] = 0x04;
-	data_send[2] = 0x0B;
-	data_send[3] = 0x00;
-	data_send[4] = 0x04;
-	data_send[5] = 0x38;
-
-	if (pir_state == 0x01){
-		data_send[7] = 0xFF;
-	}
-	else if(pir_state == 0x00){
-		data_send[7] = 0x00;
-	}
-	
+	if(pir_state == 0x00)//发过来一个关的指令相当于打开红外传感器
+		pir_state = 0x01; 
+	else if(pir_state == 0x01)//发过来一个开的指令相当于屏蔽红外传感器
+		pir_state = 0x00; 
+		
 	//将传感器地址转换成启源协议中的组地址
-	data_send[6] = pir_addr_trans(dev_addr,sub_addr);
-	data_send[8] = 0x00;
-	
-	memcpy(data, data_send, QY_DATA_LEN);
+	cir_num = pir_addr_trans(dev_addr,sub_addr);
+
+	//保存传感器功能到remote.db
+	save_pir_func(cir_num, pir_state);
 	
 }
 
@@ -172,7 +163,7 @@ void scene_config_trans(unsigned char *data){
 
 		}
 	}
-	else {//若是红外传感器设备
+	else {//若是红外传感器设备(先将状态保存到scene.txt)
 		scene_para.pir_state[0] = data[8]; //继电器状态
 		scene_para.time_delay[0] = data[9];
 	}
@@ -200,31 +191,28 @@ void scene_config_trans(unsigned char *data){
 //需要配置发送给启源的数据
 void scene_control_trans(unsigned char *data, unsigned char qy_data[][BUF_MAX], SCENE_P *para){
 	int i;
+	UCHAR cir_num;
+	UCHAR pir_state;
 	
 	para->scene_id = data[7];
 	
-	//读取dimmer_scene.txt文件，匹配场景号
+	//读取scene.txt文件，匹配场景号
 	match_dimmer_scene(para);
+	
 
 	if (para->scene_num != 0){ //若文件中保存了该场景号
 	
 		for (i = 0; i < para->scene_num; i++){
-			qy_data[i][0] = 0x00;
-			qy_data[i][1] = 0x04;
-			qy_data[i][2] = 0x0B;
-			qy_data[i][3] = 0x00;
-			qy_data[i][4] = 0x04;
-			qy_data[i][5] = 0x3A;
-
-			qy_data[i][8] = para->time_delay[i];
 
 			if (match_addr(para->dev_addr[i],"dimmer_addr") == 1){ //若是调光灯设备
 				//调光值的转换
+				dimmer_db_update(para->dev_addr[i], para->sub_addr[i],para->dimmer_value[i]);
+
 				clo_qy_trans(&para->dimmer_value[i]);
 				qy_data[i][7] = para->dimmer_value[i];
 				//地址的转换
 				qy_data[i][6] = addr_trans(para->dev_addr[i],para->sub_addr[i]);
-
+				qy_data[i][5] = 0x3A;
 				//判断是色温灯还是调光灯
 				if (para->sub_addr[i] == 0x34 || para->sub_addr[i] == 0x32 || \
 					para->sub_addr[i] == 0x36 || para->sub_addr[i] == 0x38)
@@ -233,17 +221,25 @@ void scene_control_trans(unsigned char *data, unsigned char qy_data[][BUF_MAX], 
 			}
 			else if(match_addr(para->dev_addr[i],"pir_addr") == 1) {//若是红外传感器
 
-				qy_data[i][5] = 0x38;
-				
-				if (para->pir_state[i] == 1){
-					qy_data[i][7] = 0xFF;
+				cir_num = pir_addr_trans(para->dev_addr[i], para->sub_addr[i]);
+				if (para->pir_state[i] == 0x01){
+					pir_state = 0x00;
 				}
-				else if (para->pir_state[i] == 0){
-					qy_data[i][7] == 0x00;
+				else if (para->pir_state[i] == 0x00){
+					pir_state == 0x01;
 				}
-				qy_data[i][6] = pir_addr_trans(para->dev_addr[i], para->sub_addr[i]);
-				
+				save_pir_func(cir_num, pir_state);		
+				continue;
 			}
+			
+			qy_data[i][0] = 0x00;
+			qy_data[i][1] = 0x04;
+			qy_data[i][2] = 0x0B;
+			qy_data[i][3] = 0x00;
+			qy_data[i][4] = 0x04;
+			
+
+			qy_data[i][8] = para->time_delay[i];
 				
 			
 		}
@@ -277,10 +273,39 @@ void scene_delete_trans(unsigned char *data){
 	data_send[8] = 0x01;
 	len = data_send[5];
 	
-	data_send[8] = XOR_check(data_send, len-1);
+	data_send[9] = XOR_check(data_send, len-1);
 
 	memcpy(data, data_send, len);
 	
+}
+
+//触点输入配置
+void delay_config_inf(UCHAR *data){
+	UCHAR dev_addr = data[1];
+	UCHAR sub_addr = data[2];
+
+	CONF_PIR delay_conf;
+
+	sub_addr -=0x40;
+	if(!match_addr(dev_addr, "pir_addr"))
+		return;
+
+	//初始化delay_conf 结构体
+	delay_conf.pir_value = data[7];
+
+	delay_conf.dev_addr = data[8];
+	delay_conf.sub_addr = data[9];
+	
+
+	//将结构体里的信息保存至remote.db
+		
+	if(delay_conf.pir_value == 0x24) //删除配置信息
+		delete_delay_conf(dev_addr,sub_addr);
+	else{
+		save_delay_conf(delay_conf, dev_addr, sub_addr);
+	}
+	
+
 }
 
 //启源反馈 调光灯反馈和红外反馈
@@ -373,6 +398,7 @@ void led_off(void){
 	close(fd);
 }
 
+
 void send_innet_cmd(INTERFACE *dev,unsigned char *complite_data){
 	//接收到网关发送的入网反馈指令
 	DEV_QY qy_device;
@@ -411,6 +437,7 @@ void send_innet_cmd(INTERFACE *dev,unsigned char *complite_data){
 
 }
 
+
 void singlcontrl_feedback(UCHAR *data)
 {
 	UCHAR dev_addr = data[1];
@@ -436,7 +463,7 @@ void singlcontrl_feedback(UCHAR *data)
 	
 	if (dimmer_flag&&value != 0x9a){
 		//调光灯反馈要反馈调光当前值
-		parse_dimmer_file(&dim_value, dev_addr, sub_addr);
+		dim_value = parse_dimmer_file(dev_addr, sub_addr);
 		data_send[7] = dim_value;
 	}
 	else if (value == 0x9a)
@@ -452,18 +479,334 @@ void singlcontrl_feedback(UCHAR *data)
 	
 }
 
-void event_handler(INTERFACE *dev, unsigned char *complite_data)
+
+void delay_config_feedback(INTERFACE *dev, UCHAR *data){
+	UCHAR data_send[BUF_MAX] = {0};
+	
+	data_send[0] = 0xfa;
+	data_send[3] = data[1];
+	data_send[4] = data[2];
+	data_send[1] = 0x00;
+	data_send[2] = 0x00;
+	data_send[5] = 0x09;
+	data_send[6] = 0x12;
+	data_send[7] = 0x01;
+
+	data_send[8] = XOR_check(data_send, data_send[5]);
+	
+	cbus_enqueue(&dev->queue_write, data_send);
+}
+
+void scene_control_feedback(INTERFACE *dev, UCHAR scene_id){
+
+	SCENE_P para;
+	BACK_P callback_p;
+	int i,j,module_num,len;
+	UCHAR data_send[BUF_MAX][BUF_MAX] = {0};
+	
+
+	para.scene_id = scene_id;
+
+
+	match_dimmer_scene(&para);
+
+	module_num = caculate_scene_module(para);
+
+	callback_p.module_num = module_num;
+	
+	memset(callback_p.pir_state, 0, BUF_MAX);
+	
+
+	get_callback_para(&callback_p, para);
+
+	for (i = 0; i < callback_p.module_num; i++){ //调光模块的整体反馈
+		data_send[i][0] = 0xFA;
+		data_send[i][1] = 0xFF;
+		data_send[i][2] = 0xFF;
+		data_send[i][3] = callback_p.dev_addr[i];
+		data_send[i][4] = 0x00;
+		data_send[i][5] = 0x10;
+		data_send[i][6] = 0x04;
+		
+		
+		if (match_addr(callback_p.dev_addr[i],"pir_addr")){
+			continue;
+		}
+		else {
+			len = data_send[i][5];
+			for (j = 0; j < 8; j++)
+				data_send[i][7+j] = callback_p.dimmer_value[i][j];
+			
+			data_send[i][15] = XOR_check(data_send[i], len);
+		}
+
+		usleep(50000);
+		
+		printf("\n-------(* 'ω')>︻╦╤─❇---- scene control feedback to clowire ---------\n");						   
+		for (j = 0; j < len; j++)												 
+			printf("%02x ", data_send[i][j]);													  
+		printf("\n------------------------------------------------------\n");
+
+		cbus_enqueue(&dev->queue_write, data_send[i]);
+		
+	}	
+	//红外传感器的单独反馈
+	for(i = 0; i<para.scene_num;i++){
+		if(match_addr(para.dev_addr[i],"dimmer_addr"))
+			continue;
+		memset(data_send[i], 0, BUF_MAX);
+		
+		data_send[i][0] = 0xfa;
+		data_send[i][1] = 0xff;
+		data_send[i][2] = 0xff;
+		
+		data_send[i][3] = para.dev_addr[i];
+		data_send[i][4] = para.sub_addr[i];
+		data_send[i][5] = 0x09;
+		data_send[i][6] = 0x03;
+		data_send[i][7] = para.pir_state[i];
+
+		len = data_send[i][5];
+
+		data_send[i][8] = XOR_check(data_send[i], len);
+
+		printf("\n-------(* 'ω')>︻╦╤─❇---- scene control feedback to clowire ---------\n");						   
+		for (j = 0; j < len; j++)												 
+			printf("%02x ", data_send[i][j]);													  
+		printf("\n------------------------------------------------------\n");
+		
+		cbus_enqueue(&dev->queue_write, data_send[i]);
+
+	}
+	
+}
+
+void feed_back(UCHAR *data){
+	INTERFACE *dev = NULL;
+	char name[20] = {0};
+	UCHAR data_send[BUF_MAX] = {0};
+	UCHAR dev_addr;
+	UCHAR sub_addr;
+	UCHAR circuit_num;
+	UCHAR dim_value;
+	int len;
+	
+	sprintf(name, "/dev/ttyS1");
+	circuit_num = data[6];
+	
+	dev = find_link_by_name(name);
+	if (!dev)
+		printf("\n (* n *)>>>------------get clowire port failed------------ \n");
+
+	addr_trans_qy(&dev_addr, &sub_addr, circuit_num);
+	dim_value = data[7];
+	
+	if (data[5] == 0x3b)
+	{
+		sub_addr +=0x01;
+	}
+	data_send[0] = 0xFA;
+	data_send[1] = 0xFF;
+	data_send[2] = 0xFF;
+	data_send[3] = dev_addr;
+	data_send[4] = sub_addr;
+	data_send[5] = 0x09;
+	data_send[6] = 0x03;
+	if (match_addr(dev_addr, "dimmer_addr")){
+		qy_clo_trans(&dim_value);
+		data_send[7] = dim_value;
+	}
+	else {
+		if (dim_value == 0x00)
+			data_send[7] = 0x00;
+		else
+			data_send[7] = 0x01;
+	}
+
+	len = data_send[5];
+
+	data_send[8] = XOR_check(data_send, len);	
+
+	cbus_enqueue(&dev->queue_write, data_send);
+}
+
+void turn_off_dimmer(CONF_PIR pir_conf){
+	UCHAR data_send[BUF_MAX][BUF_MAX] = {0};
+	SCENE_P para;
+	int i;
+	UCHAR name[30] = {0};
+	INTERFACE *dev_other;
+	
+	sprintf(name,"/dev/ttyS1");
+	dev_other = find_link_by_name(name);
+	
+	if(pir_conf.scene_id != 0x00){
+		para.scene_id = pir_conf.scene_id;
+		match_dimmer_scene(&para);
+		
+
+		for(i=0;i<para.scene_num;i++){
+			data_send[i][0] = 0x00;
+			data_send[i][1] = 0x04;
+			data_send[i][2] = 0x0b;
+			data_send[i][3] = 0x00;
+			data_send[i][4] = 0x04;
+			data_send[i][5] = 0x3a;
+
+			if (para.sub_addr[i] == 0x34 || para.sub_addr[i] == 0x32 || \
+				para.sub_addr[i] == 0x36 || para.sub_addr[i] == 0x38)
+				
+				data_send[i][5] = 0x3b;
+
+			data_send[i][6] = addr_trans(para.dev_addr[i], para.sub_addr[i]);
+
+			data_send[i][7] = 0x00;
+			data_send[i][8] = 0x00;
+			dimmer_db_update(para.dev_addr[i], para.sub_addr[i], 0x00);
+		}
+
+		qy_enqueue(&pir_conf.dev->queue_write, data_send, para.scene_num);
+
+		//反馈
+		scene_control_feedback(dev_other, pir_conf.scene_id);
+		
+	}
+	else{ //如果是普通设备
+	
+		data_send[0][1] = pir_conf.dev_addr;
+		data_send[0][2] = pir_conf.sub_addr;
+		data_send[0][7] = 0x9a;
+		if(match_addr(pir_conf.dev_addr,"dimmer_addr")){
+			data_send[1][1] = pir_conf.dev_addr;
+			data_send[1][2] = pir_conf.sub_addr;
+			data_send[1][7] = 0x9a;
+
+			single_control_trans(data_send[0]);
+			qy_enqueue(&pir_conf.dev->queue_write, data_send, 1);
+			
+			//反馈
+			singlcontrl_feedback(data_send[1]);
+			cbus_enqueue(&dev_other->queue_write, data_send[1]);
+			
+		}
+		else { //不是启源的调光灯
+			data_send[0][0] = 0xFA;
+			data_send[0][3] = 0x00;
+			data_send[0][4] = 0x00;
+			data_send[0][5] = 0x09;
+			data_send[0][6] = 0x01;
+			data_send[0][8] = XOR_check(data_send, data_send[5]);
+			
+			cbus_enqueue(&dev_other->queue_write, data_send);
+		}
+	}
+
+}
+
+
+void send_cmd(CONF_PIR pir_inf){
+	UCHAR data_send[BUF_MAX] = {0};
+	UCHAR name[30] = {0};
+	UCHAR qy_data[BUF_MAX][BUF_MAX] = {0};
+	INTERFACE *dev_other;
+
+	if(pir_inf.scene_id == 0x00 && pir_inf.dev_addr == 0x00)
+		return;
+	
+	
+	sprintf(name,"/dev/ttyS1");
+	dev_other = find_link_by_name(name);
+
+	if(pir_inf.pir_value == 0xFF){ //触发触点保存的场景或设备
+		if(pir_inf.scene_id != 0x00){
+			data_send[0] = 0xFA;
+			data_send[1] = 0xFF;
+			data_send[2] = 0xFF;
+			data_send[3] = 0x00;
+			data_send[4] = 0x00;
+			data_send[5] = 0x09;
+			data_send[6] = 0x0d;
+			data_send[7] = pir_inf.scene_id;
+			data_send[8] = XOR_check(data_send, data_send[5]);
+			cbus_enqueue(&dev_other->queue_read, data_send);
+			cbus_enqueue(&dev_other->queue_write, data_send);
+		}
+		else{
+			
+			data_send[1] = pir_inf.dev_addr;
+			data_send[2] = pir_inf.sub_addr;
+			data_send[7] = 0x90;
+
+			if(match_addr(pir_inf.dev_addr, "dimmer_addr")){//如果是启源调光
+
+				single_control_trans(data_send);
+				memcpy(qy_data[0], data_send, (data_send[4]+5));
+
+				qy_enqueue(&pir_inf.dev->queue_write, qy_data, 1);
+
+				//反馈
+				memset(data_send, 0, BUF_MAX);
+				data_send[1] = pir_inf.dev_addr;
+				data_send[2] = pir_inf.sub_addr;
+				data_send[7] = 0x90;
+				singlcontrl_feedback(data_send);
+				cbus_enqueue(&dev_other->queue_write, data_send);
+
+			}
+			else{
+				data_send[0] = 0xFA;
+				data_send[3] = 0x00;
+				data_send[4] = 0x00;
+				data_send[5] = 0x09;
+				data_send[6] = 0x01;
+				data_send[8] = XOR_check(data_send, data_send[5]);
+
+				cbus_enqueue(&dev_other->queue_write, data_send);
+
+			}
+		}
+
+	}
+	else if(pir_inf.pir_value == 0x00){ //将场景里的设备关掉
+
+		turn_off_dimmer(pir_inf);
+
+	}
+
+}
+
+
+void event_handler(INTERFACE *dev, UCHAR *complite_data)
 {
 	int i,len;
-	unsigned char cmd = complite_data[6]; 
+	UCHAR cmd = complite_data[6]; 
+	UCHAR dev_addr = complite_data[1];
+	UCHAR data_qy[DIMMER_NUM][BUF_MAX] = {0};
+	UCHAR scene_id;
+	SCENE_P scene_para;
+	int dimmer_addr_flag = 0;
+	int pir_addr_flag = 0;
+	
+	dimmer_addr_flag = match_addr(dev_addr,"dimmer_addr");
+	pir_addr_flag = match_addr(dev_addr,"pir_addr");
+
+	scene_para.scene_num = 1;
+	memset(scene_para.time_delay, 0, BUF_MAX);
 
 	switch(cmd){
 	case IN_NET_CALLBACK:
 		printf("innet callback from clowire\n");
+		if(!dimmer_addr_flag && !pir_addr_flag)
+			return;
+		
+		printf("innet callback from clowire\n");
 		send_innet_cmd(dev, complite_data);
 		break;
 	
-	case SINGLE_CONTROL:
+	case SINGLE_CONTROL: //单独控制反馈
+		if(!dimmer_addr_flag && !pir_addr_flag)
+			return; 
+		
 		len = complite_data[5];
 		printf("feedback command to clowire\n");
 		singlcontrl_feedback(complite_data);
@@ -476,8 +819,93 @@ void event_handler(INTERFACE *dev, unsigned char *complite_data)
 		printf("\n------------------------------------------------------\n");
 		
 		break;
+
+	case SCENE_CONTROL:
+		scene_id = complite_data[7];
+		scene_control_trans(complite_data, data_qy, &scene_para);
+	
+		//将数据放入启源串口的写缓冲区
+		char name[20] = {0};
+		INTERFACE *dev_other;
+		
+		
+		sprintf(name, "/dev/ttyS10");
+		dev_other = find_link_by_name(name);
+		qy_enqueue(&dev_other->queue_write, data_qy, scene_para.scene_num);
+		
+		printf("scene control feedback to clowire\n");
+		
+		scene_control_feedback(dev, scene_id);
+		printf("scene control feedback done\n");
+		break;
+	
+	case DELAY_CONFIG:
+		printf("delay config feedback to clowire\n");
+
+		delay_config_feedback(dev, complite_data);
+
 	}
 	
+}
+
+
+
+
+void pir_handler(INTERFACE *dev, UCHAR *complite_data){
+	UCHAR app = complite_data[5];
+	UCHAR num = complite_data[6];
+	UCHAR cmd = complite_data[2];
+
+	int state;
+	UCHAR pir_value; 
+	CONF_PIR pir_conf;
+	
+	if (app != 0x3F || cmd == 0x5B)
+		return;
+
+	
+	//读取remote.db文件中保存的值
+	state = read_by_num(num);
+	if(state == 0)//若红外传感器被屏蔽
+		return;
+
+	pir_value = complite_data[7];
+
+	//初始化结构体pir_conf
+	pir_conf.dev_addr = 0x00;
+	pir_conf.sub_addr = 0x00;
+	pir_conf.scene_id = 0x00;
+	memset(pir_conf.nums,0,BUF_MAX);
+	pir_conf.dev = dev;
+	pir_conf.pir_value = pir_value;
+
+	//读取remote.db中保存的值
+	read_pir_scene(&pir_conf,num);
+
+	
+	if(pir_conf.nums[0] == 0x00)//不属于组
+	{
+		
+		send_cmd(pir_conf);
+	}
+	else 
+	{
+		
+		if(pir_value == 0x00){
+		//读取remote.db中同组的其他传感器状态
+			if(read_pir_value(pir_conf.nums))//若有一个是1则返回0,(没有检测到人)返回1
+				send_cmd(pir_conf);
+		}
+		else if(pir_value == 0xFF)
+			send_cmd(pir_conf);
+	}
+
+	if(pir_value == 0xFF){
+		pir_value = 0x01;
+	}
+
+	//保存回路地址和状态到remote.db(有初始化默认值)
+	save_pir_value(num, pir_value);
 	
 }
 
@@ -485,6 +913,7 @@ void get_handle(void){
 	INTERFACE *dev = NULL;
 	char name[20] = {0};
 	unsigned char data[BUF_MAX] = {0};
+	int i;
 
 	sprintf(name, "/dev/ttyS1");
 	dev = find_link_by_name(name);
@@ -497,6 +926,18 @@ void get_handle(void){
 			break;
 
 		event_handler(dev, data);
+	}
+
+	sprintf(name,"/dev/ttyS10");
+	dev = find_link_by_name(name);
+	if(!dev)
+		printf("\n (* n *)>>>------------failed to get qy port------------ \n");
+
+	while(1){
+		if(qy_dequeue(&dev->queue_read, data) < 0)
+			break;
+		
+		pir_handler(dev,data);
 	}
 
 }

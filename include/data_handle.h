@@ -20,7 +20,22 @@ typedef struct scene_p {
 	
 }SCENE_P, *P_SCENE_P;
 
+typedef struct back_p{
+	UCHAR dev_addr[BUF_MAX];
+	UCHAR dimmer_value[BUF_MAX][BUF_MAX];
+	UCHAR pir_state[BUF_MAX];
+	int module_num;
+}BACK_P, *P_BACK_P;
 
+typedef struct pir_conf{
+	INTERFACE *dev;
+	UCHAR scene_id;
+	UCHAR dev_addr;
+	UCHAR sub_addr;
+	UCHAR nums[BUF_MAX];//同一组内的红外传感器的回路地址
+	UCHAR pir_value;
+
+}CONF_PIR,*P_CONF_PIR;
 
 
 #endif

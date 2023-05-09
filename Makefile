@@ -27,7 +27,7 @@ COMPILE_PREX ?=/home/7200/arm-2014.05/bin/arm-none-linux-gnueabi-
 CC = $(COMPILE_PREX)gcc
 
 qc_code: $(USER_OBJS)
-		$(CC) $(CFLAGS) -lpthread -o qc_code $(USER_OBJS)
+		$(CC) $(CFLAGS) -lpthread -lsqlite3 -o qc_code $(USER_OBJS)
 $(USER_OBJ)%.o: $(USER_OBJ)%.c
 		$(CC) $(CFLAGS) -c $< 
 

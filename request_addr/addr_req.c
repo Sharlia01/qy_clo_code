@@ -17,7 +17,15 @@
 //读取地址文件
 void parse_addr_file(unsigned char *addr)
 {
-	FILE *fp = fopen(ADDR_PATH, "r");
+	FILE *fp = NULL;
+	int ret;
+	while(1){
+		fp = fopen(ADDR_PATH,"r");
+		if (!fp)
+			ret = -1;
+		else
+			break;
+	}
 	unsigned char str[30] = {0};
 	unsigned char data[30] = {0};
 	int bytes_num_tmp = 0;
@@ -41,6 +49,13 @@ void parse_addr_file(unsigned char *addr)
 	*addr = atoi(addr);
 	fclose(fp);
 }
+
+
+void save_pir_func(UCHAR cir_num, UCHAR pir_sta){
+
+	remote_update_state(pir_sta, cir_num);
+}
+
 
 void parse_pir_addr(unsigned char *addr){
 	FILE *fp = fopen(ADDR_PATH, "r");
@@ -149,7 +164,7 @@ void save_dimmer_value(unsigned char dimmer_value, unsigned char dev_addr, unsig
 
 
 //读取photometric.txt文件，获取其中的调光值
-void parse_dimmer_file(unsigned char *dimmer_value, unsigned char dev_addr, unsigned char sub_addr)
+int parse_dimmer_file(unsigned char dev_addr, unsigned char sub_addr)
 {
 	FILE *fp = fopen(DIMMING_PATH, "a+");
 	char data[40] = {0};
@@ -157,6 +172,8 @@ void parse_dimmer_file(unsigned char *dimmer_value, unsigned char dev_addr, unsi
 	int dimmer_exist_flag = 0;
 	int bytes_num_tmp = 0;
 	int bytes_num = 0;
+	UCHAR dimmer_value;
+	int ret;
 
 	//如果txt文件中没有保存调光值则默认设置为最大值
 	sprintf(str, "dimmer_%d_%d", dev_addr, sub_addr);
@@ -171,18 +188,20 @@ void parse_dimmer_file(unsigned char *dimmer_value, unsigned char dev_addr, unsi
 	}
 
 	if (!dimmer_exist_flag){//没有保存调光值
-		*dimmer_value = 0x64;
+		ret = 100;
 	}
 	else { //文件中保存了调光值
 		fclose(fp);
 		fopen(DIMMING_PATH, "r");
 		fseek(fp,bytes_num, SEEK_SET);
-		fscanf(fp, "%*s %s", dimmer_value);//取出文件中保存的调光值
-		*dimmer_value = atoi(dimmer_value);
+		fscanf(fp, "%*s %s", &dimmer_value);//取出文件中保存的调光值
+		ret = atoi(&dimmer_value);
 
 	}
 		
 	fclose(fp);
+
+	return ret;
 }
 
 void bin_to_dec(char *val, unsigned char *data){
@@ -271,6 +290,13 @@ void remove_all_files(void)
 	
 	if((access(DIMMER_SCENE,F_OK))!=-1)//文件存在
 		remove(DIMMER_SCENE); //删除场景文件
+
+	if((access(REMOTE_DB_PATH,F_OK))!=-1)
+		remove(REMOTE_DB_PATH); //删除红外传感器的db文件
+
+	if((access(DIMMER_DB_PATH,F_OK))!=-1)
+		remove(DIMMER_DB_PATH); //删除调光灯db文件
+		
 }
 
 //读取拨码盘数据并存入addr.txt
@@ -280,7 +306,6 @@ void *read_addr(void *args){
 	int fd[DIAL_NUM];
 	char val[DIAL_NUM] = {0};
 	unsigned char data = 0x00;
-	UCHAR data_tmp;
 	char val_tmp;
 	int flag = 2;
 
@@ -297,9 +322,7 @@ void *read_addr(void *args){
 
 
 	/* 读拨码数据 */
-	while(1){ //一直在监听拨码盘
-
-		data_tmp = data;
+	while(1){
 		
 		for (i = 0; i < DIAL_NUM; i++){
 						
@@ -310,11 +333,6 @@ void *read_addr(void *args){
 		}
 		
 		bin_to_dec(val, &data); //将二进制的val转换成十进制
-
-		if (data_tmp == data)
-			continue;
-
-		sleep(1);
 		
 		if (data > 0xf0)
 		{
@@ -336,19 +354,21 @@ void *read_addr(void *args){
 			printf("delete all config files");
 			remove_all_files();
 		}
+		break;
 	}
 
 	
 }
 
+
+
 //申请地址，保存设备地址（调光灯和红外传感器）
 void request_address(void)
 {
-	//创建线程读取拨码盘数据并保存至addr.txt
 	
     pthread_t tid_read;
 
-
+	//创建线程读取拨码盘数据并保存至addr.txt
     pthread_create(&tid_read, NULL, read_addr, NULL); 
     pthread_detach(tid_read);
 
@@ -387,6 +407,11 @@ void match_dimmer_scene(SCENE_P *para){
 	int i;
 	
 	para->scene_num = 0; //场景里配置的启源灯加红外传感器的数目
+	memset(para->dev_addr, 0, BUF_MAX);
+	memset(para->sub_addr, 0, BUF_MAX);
+	memset(para->dimmer_value, 0, BUF_MAX);
+	memset(para->time_delay, 0, BUF_MAX);
+	memset(para->pir_state, 0, BUF_MAX);
 	
 	FILE *fp = fopen(DIMMER_SCENE, "r");
 
@@ -520,6 +545,20 @@ void addr_trans_qy(unsigned char *dev_addr, unsigned char *sub_addr, unsigned ch
 
 }
 
+void pir_addr_clo(UCHAR *dev_addr,UCHAR *sub_addr,UCHAR num)
+{
+	FILE *fp = fopen(ADDR_PATH,"r");
+	int module_num = 0;
+
+	parse_pir_addr(dev_addr);
+
+	module_num = (num-0x01)/CIRCUIT_MAX;
+
+	*dev_addr = module_num + *dev_addr;
+	*sub_addr = (num - module_num*CIRCUIT_MAX - 0x01) + SUB_PIR_ADDR;
+}
+
+
 void read_addr_file(DEV_QY *qy_device){
 	char str[30] = {0};
 	char type[30] = {0};
@@ -572,4 +611,144 @@ int match_innet_dev(unsigned char *complite_data){
 	return line_num+1;
 
 }
+
+int caculate_scene_module(SCENE_P para){
+	int i;
+	int num = 1;
+	FILE *fp = fopen(MODULE_NUM, "w+");
+	UCHAR str[50] = {0};
+	UCHAR data[50] = {0};
+	int flag = 0;
+
+	fprintf(fp, "%d \n", para.dev_addr[0]);
+
+	for (i = 0; i < para.scene_num; i++){ //scene_num = 3;
+		
+		fseek(fp, 0, SEEK_SET);
+		sprintf(str, "%d", para.dev_addr[i]);
+		
+		while (fgets(data, sizeof(data), fp)){
+
+			if (strstr(data, str)!= NULL){//检索到子串
+				flag = 1;
+				break;
+			}
+			else{
+				flag = 0;
+			}
+			memset(data, 0, sizeof(data));
+			
+		}
+
+		if (!flag){
+			fprintf(fp, "%d \n", para.dev_addr[i]);
+			num += 1;
+		}
+			
+		
+		memset(str, 0, sizeof(str));
+	
+	}
+
+	fclose(fp);
+	return num;
+
+}
+
+void get_callback_para(BACK_P * back_p, SCENE_P para){
+	FILE *fp = fopen(MODULE_NUM, "r");
+	UCHAR data[50] = {0};
+	UCHAR str[50] = {0};
+	int i,j,bytes_num = 0;
+	int num = 0;
+	UCHAR dev_addr;
+	
+	while(fgets(data, sizeof(data), fp)){ //data is part of fp 
+
+		sscanf(data, "%s",&dev_addr);
+		back_p->dev_addr[num] = atoi(&dev_addr);
+		memset(back_p->dimmer_value[num],0, BUF_MAX);
+		
+		dimmer_table_read(back_p->dimmer_value[num], back_p->dev_addr[num]);
+		bytes_num += strlen(data);
+		memset(data, 0, sizeof(data));
+		num++;
+	}
+
+}
+
+int read_by_num(UCHAR num){
+	UCHAR data[6] = {0};
+	remote_table_read(num, data);
+
+	if(data[1] == 0x01)
+		return 1;
+	else if(data[1] == 0x00)
+		return 0;
+}
+
+
+void save_delay_conf(CONF_PIR p_conf, UCHAR dev_addr, UCHAR sub_addr){
+	UCHAR data[4] = {0};
+
+	data[0] = pir_addr_trans(dev_addr, sub_addr);
+
+	if(p_conf.dev_addr == 0x00)
+		data[3] = p_conf.sub_addr;//表示sceneid
+	else {
+		data[1] = p_conf.dev_addr;
+		data[2] = p_conf.sub_addr;
+	}
+	remote_table_update(data);
+}
+
+void delete_delay_conf(UCHAR dev_addr, UCHAR sub_addr){
+	UCHAR data[4] = {0};
+
+	data[0] = pir_addr_trans(dev_addr, sub_addr);
+
+	remote_table_update(data);
+
+}
+
+void read_pir_scene(CONF_PIR *pir_conf, UCHAR num){
+	UCHAR data[6] = {0};
+
+	remote_table_read(num, data);
+
+	pir_conf->dev_addr = data[3];
+	pir_conf->sub_addr = data[4];
+	pir_conf->scene_id = data[5];
+
+	remote_read_num(data, pir_conf->nums,num);
+
+}
+
+int read_pir_value(UCHAR *nums){
+	int i = 0,j;
+	UCHAR data[6] = {0};
+	UCHAR group[BUF_MAX] = {0};
+	
+	while(nums[i] != 0x00){
+		remote_table_read(nums[i], data);
+		group[i] = data[2];
+		i++;
+	}
+
+	for(j = 0; j<i; j++){
+		if(group[i] == 0x01)
+			return 0;
+	}
+
+	return 1;
+
+}
+
+void save_pir_value(UCHAR num, UCHAR pir_value){
+
+	remote_update_value(pir_value, num);
+}
+
+
+
 

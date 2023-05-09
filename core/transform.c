@@ -30,20 +30,21 @@ void clowire_to_qiyuan(unsigned char *complite_data, unsigned char qy_data[][BUF
 		{
 			case SINGLE_CONTROL: //单独控制
 				printf("single dev control command from clowire\n");
-				if (dimmer_addr_flag) //调光灯的控制指令包括调光灯的色温
+				if (dimmer_addr_flag) {
 					single_control_trans(complite_data);
+					
+					//单独控制指令只有一条
+					len = complite_data[4] + 5;
+					memcpy(qy_data[0], complite_data, len);
+					
+					printf("\n-------(* 'ω')>︻╦╤─❇---- handle data ---------\n");						   
+					for (i = 0; i < len; i++)												 
+						printf("%02x ", complite_data[i]);													  
+					printf("\n------------------------------------------------------\n");
+
+				}
 				else if (pir_addr_flag) //红外传感器的控制指令
 					pir_control(complite_data);
-
-				//单独控制指令只有一条
-				len = complite_data[4] + 5;
-				memcpy(qy_data[0], complite_data, len);
-				
-				printf("\n-------(* 'ω')>︻╦╤─❇---- handle data ---------\n");						   
-				for (i = 0; i < len; i++)												 
-					printf("%02x ", complite_data[i]);													  
-				printf("\n------------------------------------------------------\n");
-				
 				break;
 				
 			case SCENE_CONFIG: //场景配置
@@ -51,24 +52,23 @@ void clowire_to_qiyuan(unsigned char *complite_data, unsigned char qy_data[][BUF
 				if (dimmer_addr_flag || pir_addr_flag)
 					scene_config_trans(complite_data);
 				break;
-				//memcpy(qy_data[0], complite_data, strlen(complite_data));
 				
-			case SCENE_CONTROL: //场景控制
+			/*case SCENE_CONTROL: //场景控制
 				printf("scene control command from clowire\n");
 				scene_control_trans(complite_data, qy_data, para);
-				break;
+				break;*/
 				
 			case SCENE_CONFIG_DELETE://场景配置删除
 				printf("scene config delete command from clowire\n");
 				if (dimmer_addr_flag || pir_addr_flag)
-				scene_delete_trans(complite_data);
-				
-				//memcpy(qy_data[0], complite_data, strlen(complite_data));
+				scene_delete_trans(complite_data);		
 				break;
+			case DELAY_CONFIG:
+				printf("delay input config from clowire\n");
+				delay_config_inf(complite_data);
+				break;		
 				
-		}
-
-		
+		}	
 	
 }
 
